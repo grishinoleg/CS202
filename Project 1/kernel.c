@@ -164,11 +164,11 @@ void handle_disk_read()
     clock, current_pid);
 
   process_table[current_pid].state = BLOCKED;
-  process_table[R1].total_CPU_time_used += (DISK_READ_OVERHEAD
-    + BLOCK_READ_TIME*R2);
 
   disk_read_req(current_pid, R2);
 
+  process_table[current_pid].total_CPU_time_used +=
+    (clock - current_quantum_start_time);
   current_quantum_start_time = clock;
 
   schedule();
@@ -180,10 +180,11 @@ void handle_keyboard()
     clock, current_pid);
 
   process_table[current_pid].state = BLOCKED;
-  process_table[R1].total_CPU_time_used += KEYBOARD_READ_OVERHEAD;
 
   keyboard_read_req(current_pid);
 
+  process_table[current_pid].total_CPU_time_used +=
+    (clock - current_quantum_start_time);
   current_quantum_start_time = clock;
 
   schedule();
@@ -255,6 +256,8 @@ void handle_semaphore()
       enqueue(&sem->ready_queue, current_pid);
 
       // Restart current quantum when a process gets blocked and start a process
+      process_table[current_pid].total_CPU_time_used +=
+        (clock - current_quantum_start_time);
       current_quantum_start_time = clock;
       schedule();
     }
@@ -269,12 +272,11 @@ void handle_clock_interrupt()
   // printf("%d=%d-%d; ", clock-current_quantum_start_time, clock, current_quantum_start_time);
   // printf("current_pid: %d\n", current_pid);
 
-  process_table[current_pid].total_CPU_time_used += CLOCK_INTERRUPT_PERIOD;
-
   if ((current_pid != IDLE_PROCESS) && ((clock - current_quantum_start_time) >= QUANTUM))
   {
     // printf("\n");
     process_table[current_pid].state = READY;
+    process_table[current_pid].total_CPU_time_used += clock - current_quantum_start_time;
 
     // Reschedule the process
     enqueue(&ready_queue, current_pid);
@@ -295,7 +297,10 @@ void handle_disk_interrupt()
   printf("Time %d: Handled DISK_INTERRUPT for pid %d\n", clock, R1);
 
   if (current_pid == IDLE_PROCESS)
+  {
+    current_quantum_start_time = clock;
     schedule();
+  }
 
 }
 
@@ -307,7 +312,10 @@ void handle_keyboard_interrupt()
   printf("Time %d: Handled KEYBOARD_INTERRUPT for pid %d\n", clock, R1);
 
   if (current_pid == IDLE_PROCESS)
+  {
+    current_quantum_start_time = clock;
     schedule();
+  }
 
 }
 
