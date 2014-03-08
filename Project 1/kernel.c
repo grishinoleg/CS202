@@ -137,16 +137,16 @@ void handle_trap()
   switch (R1)
   {
     case DISK_READ:
-      // handle_disk_read();
+      handle_disk_read();
       break;
     case DISK_WRITE:
       disk_write_req(current_pid);
       printf("Time %d: Process %d issues disk write request\n",
         clock, current_pid);
       break;
-    // case KEYBOARD_READ:
-    //
-    //   break;
+    case KEYBOARD_READ:
+      handle_keyboard();
+      break;
     case FORK_PROGRAM:
       handle_fork();
       break;
@@ -156,6 +156,37 @@ void handle_trap()
     case SEMAPHORE_OP:
       handle_semaphore();
   }
+}
+
+void handle_disk_read()
+{
+  printf("Time %d: Process %d issues disk read request\n",
+    clock, current_pid);
+
+  process_table[current_pid].state = BLOCKED;
+  process_table[R1].total_CPU_time_used += (DISK_READ_OVERHEAD
+    + BLOCK_READ_TIME*R2);
+
+  disk_read_req(current_pid, R2);
+
+  current_quantum_start_time = clock;
+
+  schedule();
+}
+
+void handle_keyboard()
+{
+  printf("Time %d: Process %d issues keyboard read request\n",
+    clock, current_pid);
+
+  process_table[current_pid].state = BLOCKED;
+  process_table[R1].total_CPU_time_used += KEYBOARD_READ_OVERHEAD;
+
+  keyboard_read_req(current_pid);
+
+  current_quantum_start_time = clock;
+
+  schedule();
 }
 
 void handle_fork()
@@ -186,7 +217,8 @@ void handle_kill()
     process_table[current_pid].total_CPU_time_used);
 
   // Start the process on the ready queue
-  schedule(ready_queue);
+  current_quantum_start_time = clock;
+  schedule();
 
 }
 
@@ -199,7 +231,9 @@ void handle_semaphore()
       current_pid, R2);
     if (!sem->value && (sem->ready_queue->head != NULL))
     {
-      enqueue(&ready_queue, sem->ready_queue->head->pid);
+      PID_type pid = sem->ready_queue->head->pid;
+      process_table[pid].state = READY;
+      enqueue(&ready_queue, pid);
       sem->ready_queue->head = sem->ready_queue->head->next;
     }
     else
@@ -219,63 +253,93 @@ void handle_semaphore()
     {
       process_table[current_pid].state = BLOCKED;
       enqueue(&sem->ready_queue, current_pid);
-      schedule(ready_queue);
+
+      // Restart current quantum when a process gets blocked and start a process
+      current_quantum_start_time = clock;
+      schedule();
     }
   }
 }
 
 void handle_clock_interrupt()
 {
+
+  // for (int i = 1; i < 3; i++)
+  //   printf("%d: %u, %d; ", i, process_table[i].state, process_table[i].total_CPU_time_used);
+  // printf("%d=%d-%d; ", clock-current_quantum_start_time, clock, current_quantum_start_time);
+  // printf("current_pid: %d\n", current_pid);
+
   process_table[current_pid].total_CPU_time_used += CLOCK_INTERRUPT_PERIOD;
-  if (clock - current_quantum_start_time == 40)
+
+  if ((current_pid != IDLE_PROCESS) && ((clock - current_quantum_start_time) >= QUANTUM))
   {
+    // printf("\n");
+    process_table[current_pid].state = READY;
+
     // Reschedule the process
     enqueue(&ready_queue, current_pid);
 
     // Schedule new process
-    schedule(ready_queue);
+    schedule();
 
     current_quantum_start_time = clock;
+
   }
 }
 
 void handle_disk_interrupt()
 {
+  process_table[R1].state = READY;
+
   enqueue(&ready_queue, R1);
   printf("Time %d: Handled DISK_INTERRUPT for pid %d\n", clock, R1);
+
+  if (current_pid == IDLE_PROCESS)
+    schedule();
+
 }
 
 void handle_keyboard_interrupt()
 {
+  process_table[R1].state = READY;
+
+  enqueue(&ready_queue, R1);
+  printf("Time %d: Handled KEYBOARD_INTERRUPT for pid %d\n", clock, R1);
+
+  if (current_pid == IDLE_PROCESS)
+    schedule();
 
 }
 
-void handle_disk_read()
-{
-  disk_read_req(current_pid, R2);
-
-  process_table[current_pid].state = BLOCKED;
-
-  schedule(ready_queue);
-
-  printf("Time %d: Process %d issues disk read request\n",
-    clock, current_pid);
-}
-
-void schedule(PID_QUEUE *queue)
+void schedule()
 {
   // if (ready_queue->head == NULL)
+
   if (!active_processes)
   {
     printf("-- No more processes to execute --\n");
     exit(0);
   }
-  if (process_table[queue->head->pid].state == BLOCKED)
-    queue->head = queue->head->next;
-  current_pid = queue->head->pid;
-  process_table[current_pid].state = RUNNING;
-  queue->head = queue->head->next;
-  printf("Time %d: Process %d runs\n", clock, current_pid);
+  if (ready_queue->head == NULL)
+  {
+    printf("Time %d: Processor is idle\n", clock);
+    current_pid = IDLE_PROCESS;
+  }
+  else
+  {
+    if (process_table[ready_queue->head->pid].state == BLOCKED)
+    {
+      ready_queue->head = ready_queue->head->next;
+      schedule();
+    }
+    else
+    {
+      current_pid = ready_queue->head->pid;
+      process_table[current_pid].state = RUNNING;
+      ready_queue->head = ready_queue->head->next;
+      printf("Time %d: Process %d runs\n", clock, current_pid);
+    }
+  }
 }
 
 void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid)
@@ -297,5 +361,4 @@ void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid)
   if (queue->tail != NULL)
     queue->tail->next = new_ready_queue_element;
   queue->tail = new_ready_queue_element;
-  process_table[pid].state = READY;
 }
