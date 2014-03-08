@@ -6,30 +6,39 @@
 extern void initialize_kernel();
 
 // Handles behavior for TRAP signal
+
 void handle_trap();
 
 // Invoked when a TRAP is a disk read
+
 void handle_disk_read();
 
 // Invoked when a TRAP is a keyboard read
+
 void handle_keyboard();
 
 // Invoked when a TRAP is a fork
+
 void handle_fork();
 
 // Invoked when a TRAP is a kill
+
 void handle_kill();
 
 // Invoked when a TRAP is a semaphore signal
+
 void handle_semaphore();
 
 // Handles a clock interrupt
+
 void handle_clock_interrupt();
 
 // Handles a disk interrupt
+
 void handle_disk_interrupt();
 
 // Handles a keyboard interrupt
+
 void handle_keyboard_interrupt();
 
 // Next two methods can be used for both semaphore and process queues
@@ -46,7 +55,9 @@ typedef struct {
 } PID_QUEUE;
 
 // Schedules a process to run now
+
 void schedule();
 
 // Put a process at the end of the queue
+
 void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid);
