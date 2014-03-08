@@ -29,8 +29,21 @@ void handle_keyboard_interrupt();
 // Handles a blocking disk read
 void handle_disk_read();
 
+// Next two methods can be used for both semaphore and process queues
+// Moving declarations here makes it easier
+
+typedef struct PID_queue_elt {
+  struct PID_queue_elt *next;
+  PID_type pid;
+} PID_QUEUE_ELT;
+
+typedef struct {
+  PID_QUEUE_ELT *head;
+  PID_QUEUE_ELT *tail;
+} PID_QUEUE;
+
 // Schedules a process to run now
-void schedule();
+void schedule(PID_QUEUE *queue);
 
 // Put a process at the end of the queue
-void enqueue(PID_type pid);
+void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid);

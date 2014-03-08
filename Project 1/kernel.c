@@ -29,23 +29,31 @@ PROCESS_TABLE_ENTRY process_table[MAX_NUMBER_OF_PROCESSES];
    and a tail pointer. */
 
 
-typedef struct PID_queue_elt {
-  struct PID_queue_elt *next;
-  PID_type pid;
-} PID_QUEUE_ELT;
+// typedef struct PID_queue_elt {
+//   struct PID_queue_elt *next;
+//   PID_type pid;
+// } PID_QUEUE_ELT;
 
 // Pointer to the current ready queue entry
 
 PID_QUEUE_ELT *ready_queue_entry;
 
 
-typedef struct {
-  PID_QUEUE_ELT *head;
-  PID_QUEUE_ELT *tail;
-} PID_QUEUE;
+// typedef struct {
+//   PID_QUEUE_ELT *head;
+//   PID_QUEUE_ELT *tail;
+// } PID_QUEUE;
 
-//pointer to the ready queue
+// Pointer to the ready queue
+
 PID_QUEUE *ready_queue;
+
+// Semaphore struct
+
+typedef struct {
+  PID_QUEUE *ready_queue;
+  int value;
+} SEMAPHORE;
 
 /* This constant defines the number of semaphores that your code should
    support */
@@ -57,6 +65,11 @@ PID_QUEUE *ready_queue;
 
 #define INITIAL_SEMAPHORE_VALUE 1
 
+// Designated initializer for array semaphores just in case so random
+// values aren't put there
+
+SEMAPHORE semaphores[NUMBER_OF_SEMAPHORES] = {[0 ... NUMBER_OF_SEMAPHORES-1]
+    = { NULL, 1}};
 
 /* A quantum is 40 ms */
 
@@ -155,15 +168,17 @@ void handle_fork()
   printf("Time %d: Creating process entry for pid %d\n", clock, R2);
 
   // Put new process to the ready queue. Malloc the new node
-  enqueue(R2);
+  enqueue(&ready_queue, R2);
 
   active_processes++;
 }
 
 void handle_kill()
 {
-  // Update process table (total time gets rewritten for each new process)
+  // Update process table
   process_table[current_pid].state = UNINITIALIZED;
+  process_table[current_pid].total_CPU_time_used +=
+    (clock - current_quantum_start_time);
   active_processes--;
 
   // STDOUT for killing process
@@ -171,13 +186,42 @@ void handle_kill()
     process_table[current_pid].total_CPU_time_used);
 
   // Start the process on the ready queue
-  schedule();
+  schedule(ready_queue);
 
 }
 
 void handle_semaphore()
 {
-
+  SEMAPHORE *sem = &semaphores[R2];
+  if (R3) // UP
+  {
+    printf("Time %d: Process %d issues UP operation on semaphore %d\n", clock,
+      current_pid, R2);
+    if (!sem->value && (sem->ready_queue->head != NULL))
+    {
+      enqueue(&ready_queue, sem->ready_queue->head->pid);
+      sem->ready_queue->head = sem->ready_queue->head->next;
+    }
+    else
+    {
+      sem->value++;
+    }
+  }
+  else // DOWN
+  {
+    printf("Time %d: Process %d issues DOWN operation on semaphore %d\n", clock,
+      current_pid, R2);
+    if (sem->value)
+    {
+      sem->value--;
+    }
+    else
+    {
+      process_table[current_pid].state = BLOCKED;
+      enqueue(&sem->ready_queue, current_pid);
+      schedule(ready_queue);
+    }
+  }
 }
 
 void handle_clock_interrupt()
@@ -186,10 +230,10 @@ void handle_clock_interrupt()
   if (clock - current_quantum_start_time == 40)
   {
     // Reschedule the process
-    enqueue(current_pid);
+    enqueue(&ready_queue, current_pid);
 
     // Schedule new process
-    schedule();
+    schedule(ready_queue);
 
     current_quantum_start_time = clock;
   }
@@ -197,7 +241,7 @@ void handle_clock_interrupt()
 
 void handle_disk_interrupt()
 {
-  enqueue(R1);
+  enqueue(&ready_queue, R1);
   printf("Time %d: Handled DISK_INTERRUPT for pid %d\n", clock, R1);
 }
 
@@ -212,13 +256,13 @@ void handle_disk_read()
 
   process_table[current_pid].state = BLOCKED;
 
-  schedule();
+  schedule(ready_queue);
 
   printf("Time %d: Process %d issues disk read request\n",
     clock, current_pid);
 }
 
-void schedule()
+void schedule(PID_QUEUE *queue)
 {
   // if (ready_queue->head == NULL)
   if (!active_processes)
@@ -226,22 +270,32 @@ void schedule()
     printf("-- No more processes to execute --\n");
     exit(0);
   }
-  current_pid = ready_queue->head->pid;
+  if (process_table[queue->head->pid].state == BLOCKED)
+    queue->head = queue->head->next;
+  current_pid = queue->head->pid;
   process_table[current_pid].state = RUNNING;
-  ready_queue->head = ready_queue->head->next;
+  queue->head = queue->head->next;
   printf("Time %d: Process %d runs\n", clock, current_pid);
 }
 
-void enqueue(PID_type pid)
+void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid)
 {
+  // If a queue is null, then we initialize it
+  if (*pointer_to_queue == NULL)
+  {
+    *pointer_to_queue = (PID_QUEUE *) malloc(sizeof(PID_QUEUE));
+    (**pointer_to_queue).head = NULL;
+    (**pointer_to_queue).tail = NULL;
+  }
+  PID_QUEUE *queue = *pointer_to_queue;
   PID_QUEUE_ELT *new_ready_queue_element = (PID_QUEUE_ELT *)
     malloc(sizeof(PID_QUEUE_ELT));
   new_ready_queue_element->next = NULL;
   new_ready_queue_element->pid = pid;
-  if (ready_queue->head == NULL)
-    ready_queue->head = new_ready_queue_element;
-  if (ready_queue->tail != NULL)
-    ready_queue->tail->next = new_ready_queue_element;
-  ready_queue->tail = new_ready_queue_element;
+  if (queue->head == NULL)
+    queue->head = new_ready_queue_element;
+  if (queue->tail != NULL)
+    queue->tail->next = new_ready_queue_element;
+  queue->tail = new_ready_queue_element;
   process_table[pid].state = READY;
 }
