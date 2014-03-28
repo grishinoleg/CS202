@@ -58,11 +58,11 @@ typedef struct {
 
 // Schedules a process to run now
 
-void schedule();
+void schedule(int queue_num);
 
 // Put a process at the end of the queue
 
-void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid);
+void enqueue(PID_QUEUE *queue, PID_type pid);
 
 typedef enum { RUNNING, READY, BLOCKED , UNINITIALIZED } PROCESS_STATE;
 
@@ -70,21 +70,22 @@ typedef enum { RUNNING, READY, BLOCKED , UNINITIALIZED } PROCESS_STATE;
 typedef struct process_table_entry {
   PROCESS_STATE state;
   int total_CPU_time_used;
+  int priority;
 } PROCESS_TABLE_ENTRY;
 
 // Designated initializer for array semaphores (just in case) so random
 // values aren't put there
 
 PROCESS_TABLE_ENTRY process_table[MAX_NUMBER_OF_PROCESSES] =
-  {[0 ... MAX_NUMBER_OF_PROCESSES-1] = { UNINITIALIZED, 0}};
+  {[0 ... MAX_NUMBER_OF_PROCESSES-1] = { UNINITIALIZED, 0, 0}};
 
 // Pointer to the current ready queue entry
 
 PID_QUEUE_ELT *ready_queue_entry;
 
-// Pointer to the ready queue
+// Pointer to the ready queue array
 
-PID_QUEUE *ready_queue;
+PID_QUEUE ready_queues[5] = {[0 ... 4] = {NULL, NULL}};
 
 // Semaphore struct
 
@@ -145,16 +146,6 @@ void initialize_kernel()
   // Put first process into the process table
 
   process_table[current_pid].state = RUNNING;
-  process_table[current_pid].total_CPU_time_used = 0;
-
-  // Malloc the ready queue
-
-  ready_queue = (PID_QUEUE *) malloc(sizeof(PID_QUEUE));
-
-  // Init the ready queue elemenets
-
-  ready_queue->head = NULL;
-  ready_queue->tail = NULL;
 
   // Initialize current quantum time and counters
 
@@ -201,6 +192,12 @@ void handle_disk_read()
 
   process_table[current_pid].state = BLOCKED;
 
+  if (clock - current_quantum_start_time < QUANTUM)
+  {
+    if (process_table[current_pid].priority < 4)
+      process_table[current_pid].priority++;
+  }
+
   // Put request and update all the necessary counters
 
   disk_read_req(current_pid, R2);
@@ -212,7 +209,7 @@ void handle_disk_read()
 
   // Schedule a process (since the current one gets blocked)
 
-  schedule();
+  schedule(4);
 }
 
 void handle_keyboard()
@@ -226,6 +223,12 @@ void handle_keyboard()
 
   // Put request and update all the necessary counters
 
+  if (clock - current_quantum_start_time < QUANTUM)
+  {
+    if (process_table[current_pid].priority < 4)
+      process_table[current_pid].priority++;
+  }
+
   keyboard_read_req(current_pid);
   io_processes++;
 
@@ -235,7 +238,7 @@ void handle_keyboard()
 
   // Schedule a process (since the current one gets blocked)
 
-  schedule();
+  schedule(4);
 }
 
 void handle_fork()
@@ -245,13 +248,12 @@ void handle_fork()
   // Update process table with the new process; update counters
 
   process_table[R2].state = READY;
-  process_table[R2].total_CPU_time_used = 0;
   active_processes++;
 
   // Put new process to the ready queue.
   // Malloc the new node (hence passing address)
 
-  enqueue(&ready_queue, R2);
+  enqueue(&ready_queues[process_table[R2].priority], R2);
 
 }
 
@@ -262,6 +264,7 @@ void handle_kill()
   process_table[current_pid].state = UNINITIALIZED;
   process_table[current_pid].total_CPU_time_used +=
     (clock - current_quantum_start_time);
+  process_table[current_pid].priority = 0;
   active_processes--;
 
   //STDOUT kill process message (after updating table since total time changes)
@@ -270,7 +273,7 @@ void handle_kill()
 
   // Start the process on the ready queue
   current_quantum_start_time = clock;
-  schedule();
+  schedule(4);
 
 }
 
@@ -295,7 +298,7 @@ void handle_semaphore()
 
       PID_type pid = sem->ready_queue->head->pid;
       process_table[pid].state = READY;
-      enqueue(&ready_queue, pid);
+      enqueue(&ready_queues[process_table[pid].priority], pid);
       sem->ready_queue->head = sem->ready_queue->head->next;
     }
     else
@@ -319,14 +322,31 @@ void handle_semaphore()
       // Block the process; init or update the semaphore's ready queue
 
       process_table[current_pid].state = BLOCKED;
-      enqueue(&sem->ready_queue, current_pid);
+
+
+      // If a queue is null, then we initialize it
+
+      if (sem->ready_queue == NULL)
+      {
+        sem->ready_queue = (PID_QUEUE *) malloc(sizeof(PID_QUEUE));
+        sem->ready_queue->head = NULL;
+        sem->ready_queue->tail = NULL;
+      }
+
+      enqueue(sem->ready_queue, current_pid);
+
+      if (clock - current_quantum_start_time < QUANTUM)
+      {
+        if (process_table[current_pid].priority < 4)
+          process_table[current_pid].priority++;
+      }
 
       // Restart current quantum when a process gets blocked and start a process
 
       process_table[current_pid].total_CPU_time_used +=
         (clock - current_quantum_start_time);
       current_quantum_start_time = clock;
-      schedule();
+      schedule(4);
     }
   }
 }
@@ -343,14 +363,16 @@ void handle_clock_interrupt()
     process_table[current_pid].state = READY;
     process_table[current_pid].total_CPU_time_used +=
       (clock - current_quantum_start_time);
+    if (process_table[current_pid].priority > 0)
+      process_table[current_pid].priority--;
 
     // Reschedule the process
 
-    enqueue(&ready_queue, current_pid);
+    enqueue(&ready_queues[process_table[current_pid].priority], current_pid);
 
     // Schedule new process and update the clock
 
-    schedule();
+    schedule(4);
     current_quantum_start_time = clock;
 
   }
@@ -367,12 +389,12 @@ void handle_disk_interrupt()
 
   // Enqueue the process or start a new one if idle
 
-  enqueue(&ready_queue, R1);
+  enqueue(&ready_queues[process_table[R1].priority], R1);
 
   if (current_pid == IDLE_PROCESS)
   {
     current_quantum_start_time = clock;
-    schedule();
+    schedule(4);
   }
 
 }
@@ -385,16 +407,16 @@ void handle_keyboard_interrupt()
 
   process_table[R1].state = READY;
   io_processes--;
-  enqueue(&ready_queue, R1);
+  enqueue(&ready_queues[process_table[R1].priority], R1);
   if (current_pid == IDLE_PROCESS)
   {
     current_quantum_start_time = clock;
-    schedule();
+    schedule(4);
   }
 
 }
 
-void schedule()
+void schedule(queue_num)
 {
   // Exit if no active processes left
 
@@ -406,56 +428,51 @@ void schedule()
 
   // Handle case when the queue is empty
 
-  if (ready_queue->head == NULL)
+  if (ready_queues[queue_num].head == NULL)
   {
 
     // If no IO pending - deadlocked system
 
-    if (!io_processes)
+    if (!queue_num && !io_processes)
     {
       printf("DEADLOCKED SYSTEM\n");
       exit(0);
     }
 
-    // If IO present - process idle; update pid
+    if (queue_num)
+    {
+      schedule(queue_num-1);
+    }
+    else
+    {
+      // If IO present - process idle; update pid
 
-    printf("Time %d: Processor is idle\n", clock);
-    current_pid = IDLE_PROCESS;
+      printf("Time %d: Processor is idle\n", clock);
+      current_pid = IDLE_PROCESS;
+    }
   }
   else
   {
     // Clear the queue of heading blocked processes (i.e. IO'd). Recursive
 
-    if (process_table[ready_queue->head->pid].state == BLOCKED)
+    if (process_table[ready_queues[queue_num].head->pid].state == BLOCKED)
     {
-      ready_queue->head = ready_queue->head->next;
-      schedule();
+      ready_queues[queue_num].head = ready_queues[queue_num].head->next;
+      schedule(queue_num);
     }
     else
     {
       // Update the table and the queue; run a process
-      current_pid = ready_queue->head->pid;
+      current_pid = ready_queues[queue_num].head->pid;
       process_table[current_pid].state = RUNNING;
-      ready_queue->head = ready_queue->head->next;
+      ready_queues[queue_num].head = ready_queues[queue_num].head->next;
       printf("Time %d: Process %d runs\n", clock, current_pid);
     }
   }
 }
 
-void enqueue(PID_QUEUE **pointer_to_queue, PID_type pid)
+void enqueue(PID_QUEUE *queue, PID_type pid)
 {
-  // If a queue is null, then we initialize it
-
-  if (*pointer_to_queue == NULL)
-  {
-    *pointer_to_queue = (PID_QUEUE *) malloc(sizeof(PID_QUEUE));
-    (**pointer_to_queue).head = NULL;
-    (**pointer_to_queue).tail = NULL;
-  }
-
-  // Dereference once for simplicity
-
-  PID_QUEUE *queue = *pointer_to_queue;
 
   // Init a node
 
