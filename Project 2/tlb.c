@@ -30,15 +30,15 @@ typedef struct {
 
 
 // This is the actual TLB array. It should be dynamically allocated
-// to the right size, depending on the num_tlb_entries value 
+// to the right size, depending on the num_tlb_entries value
 // assigned when the simulation started running.
 
 
 TLB_ENTRY *tlb;
 
 
-// This is the TLB size (number of TLB entries) chosen by the 
-// user. 
+// This is the TLB size (number of TLB entries) chosen by the
+// user.
 
 unsigned int num_tlb_entries;
 
@@ -60,23 +60,31 @@ void tlb_initialize()
   //Here's how you can allocate a TLB of the right size
   tlb = (TLB_ENTRY *) malloc(num_tlb_entries * sizeof(TLB_ENTRY));
 
-  //Fill in the rest here...
+  //Set all valid bits to zero in case there are carbage values there
+  tlb_clear_all();
 
 }
 
 // This clears out the entire TLB, by clearing the
 // valid bit for every entry.
 
-void tlb_clear_all() 
+void tlb_clear_all()
 {
-  // Fill this in.
+  for (int i = 0; i < num_tlb_entries; i++)
+  {
+    //flips VBIT_MASK from 1000.... to 0111.... and AND's it
+    tlb[i].vbit_and_vpage &= (~VBIT_MASK);
+  }
 }
 
 
 //clears all the R bits in the TLB
-void tlb_clear_R_bits() 
+void tlb_clear_R_bits()
 {
-  // Fill this in.
+  for (int i = 0; i < num_tlb_entries; i++)
+  {
+    tlb[i].mr_pframe &= (~RBIT_MASK);
+  }
 }
 
 
@@ -85,7 +93,13 @@ void tlb_clear_R_bits()
 
 void tlb_clear_entry(VPAGE_NUMBER vpage)
 {
-  // Fill this in.
+  for (int i = 0; i < num_tlb_entries; i++)
+  {
+    if ((tlb[i].vbit_and_vpage & VPAGE_MASK) == vpage)
+    {
+      tlb[i].vbit_and_vpage &= (~VBIT_MASK);
+    }
+  }
 }
 
 
@@ -97,20 +111,34 @@ void tlb_clear_entry(VPAGE_NUMBER vpage)
 
 PAGEFRAME_NUMBER tlb_lookup_vpage(VPAGE_NUMBER vpage, OPERATION op)
 {
-  // FILL THIS IN
+  for (int i = 0; i < num_tlb_entries; i++)
+  {
+    if (((tlb[i].vbit_and_vpage & VPAGE_MASK) == vpage) && (tlb[i].vbit_and_vpage & VBIT_MASK))
+    {
+      tlb_miss = FALSE;
+      tlb[i].mr_pframe |= RBIT_MASK;
+      if (op == STORE)
+      {
+        tlb[i].mr_pframe |= MBIT_MASK;
+      }
+      return (tlb[i].mr_pframe & PFRAME_MASK);
+    }
+  }
+  tlb_miss = TRUE;
+  return 0;
 }
 
 
 // tlb_insert_vpage(), below, inserts a new mapping of
 // vpage to pageframe into the TLB. When choosing which
 // entry in the TLB to write to, it selects the first
-// entry it encounters that either has a zero valid bit 
+// entry it encounters that either has a zero valid bit
 // or a zero R bit. To avoid choosing the same entries
 // over and over, it starts searching the entries from
 // where it left off the previous time (see the description
 // below.
 
-int next_vpage_to_check = 0;  // points to next TLB entry to consider 
+int next_vpage_to_check = 0;  // points to next TLB entry to consider
                               // writing to.
 
 
@@ -131,6 +159,87 @@ void tlb_insert_vpage(VPAGE_NUMBER new_vpage, PAGEFRAME_NUMBER new_pframe,
 
   // Finally, set next_vpage_to_check to point to the next entry after the
   // entry found above.
+
+  // Find entry
+
+  int found = -1;
+
+  for (int i = next_vpage_to_check; i < num_tlb_entries; i++)
+  {
+    if (!(tlb[i].vbit_and_vpage & VBIT_MASK) || !(tlb[i].mr_pframe & RBIT_MASK))
+    {
+      found = i;
+      next_vpage_to_check = (i+1) % num_tlb_entries;
+      break;
+    }
+  }
+
+  if (found < 0)
+  {
+    for (int i = 0; i < next_vpage_to_check; i++)
+    {
+      if (!(tlb[i].vbit_and_vpage & VBIT_MASK) || !(tlb[i].mr_pframe & RBIT_MASK))
+      {
+        found = i;
+        next_vpage_to_check = (i+1) % num_tlb_entries;
+        break;
+      }
+    }
+  }
+
+  if (found < 0)
+  {
+    found = next_vpage_to_check;
+    next_vpage_to_check++;
+    next_vpage_to_check %= num_tlb_entries;
+  }
+
+  // Evict if valid
+
+  if (tlb[found].vbit_and_vpage & VBIT_MASK)
+  {
+    PAGEFRAME_NUMBER pframe = (tlb[found].mr_pframe & PFRAME_MASK);
+    int mbit = 0, rbit = 0;
+    if (tlb[found].mr_pframe & MBIT_MASK)
+    {
+      mbit = 1;
+    }
+    if (tlb[found].mr_pframe & RBIT_MASK)
+    {
+      rbit = 1;
+    }
+    mmu_modify_mbit_in_bitmap(pframe, mbit);
+    mmu_modify_rbit_in_bitmap(pframe, rbit);
+  }
+
+  // Insert vpage, mbit, rbit, etc
+
+  tlb[found].vbit_and_vpage |= VBIT_MASK;
+  // printf("Before vpage(%u) %u\n", new_vpage, tlb[found].vbit_and_vpage & VPAGE_MASK);
+  tlb[found].vbit_and_vpage &= (~VPAGE_MASK);
+  tlb[found].vbit_and_vpage |= new_vpage;
+  // printf("After vpage %u\n", tlb[found].vbit_and_vpage & VPAGE_MASK);
+
+  tlb[found].mr_pframe &= (~PFRAME_MASK);
+  tlb[found].mr_pframe |= new_pframe;
+
+  if (new_rbit)
+  {
+    tlb[found].mr_pframe |= RBIT_MASK;
+  }
+  else
+  {
+    tlb[found].mr_pframe &= (~RBIT_MASK);
+  }
+  if (new_mbit)
+  {
+    tlb[found].mr_pframe |= MBIT_MASK;
+  }
+  else
+  {
+    tlb[found].mr_pframe &= (~MBIT_MASK);
+  }
+
 }
 
 
@@ -139,6 +248,27 @@ void tlb_insert_vpage(VPAGE_NUMBER new_vpage, PAGEFRAME_NUMBER new_pframe,
 
 void tlb_write_back_r_m_bits()
 {
-  //FILL THIS IN.
-}
+  int mbit, rbit;
+  PAGEFRAME_NUMBER pframe;
+  for (int i = 0; i < num_tlb_entries; i++)
+  {
+    if (tlb[i].vbit_and_vpage & VBIT_MASK)
+    {
+      mbit = 0;
+      rbit = 0;
+      if (tlb[i].mr_pframe & MBIT_MASK)
+      {
+        mbit = 1;
+      }
+      if (tlb[i].mr_pframe & RBIT_MASK)
+      {
+        rbit = 1;
+      }
 
+      pframe = (tlb[i].mr_pframe & PFRAME_MASK);
+
+      mmu_modify_mbit_in_bitmap(pframe, mbit);
+      mmu_modify_rbit_in_bitmap(pframe, rbit);
+    }
+  }
+}
