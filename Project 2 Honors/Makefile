@@ -3,10 +3,10 @@
 srcdir  = .
 
 CC      = gcc
-EXE	= 
+EXE	=
 CFLAGS  = -m32
 
-all:	
+all:
 	@echo "You need to type either \"make proj2\" or \"make proj3\""
 
 proj2$(EXE): $(srcdir)/tlb.o $(srcdir)/cpu.o $(srcdir)/mmu.o $(srcdir)/page.o $(srcdir)/kernel.o
@@ -15,4 +15,5 @@ proj2$(EXE): $(srcdir)/tlb.o $(srcdir)/cpu.o $(srcdir)/mmu.o $(srcdir)/page.o $(
 proj3$(EXE):  $(srcdir)/tlb.o $(srcdir)/cpu.o $(srcdir)/mmu.o $(srcdir)/page.o $(srcdir)/kernel.o
 	$(CC) -o proj3$(EXE) $(CFLAGS) $(srcdir)/tlb.o $(srcdir)/cpu.o $(srcdir)/mmu.o $(srcdir)/page.o $(srcdir)/kernel.o
 
-
+h_proj2$(EXE):  $(srcdir)/tlb.o $(srcdir)/cpu.o $(srcdir)/mmu.o $(srcdir)/page.o $(srcdir)/kernel.o
+	$(CC) -o h_proj2$(EXE) $(CFLAGS) $(srcdir)/tlb.o $(srcdir)/cpu.o $(srcdir)/mmu.o $(srcdir)/page.o $(srcdir)/kernel.o
